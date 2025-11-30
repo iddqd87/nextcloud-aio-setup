@@ -1,13 +1,3 @@
-```
-curl -fsSL https://raw.githubusercontent.com/iddqd87/nextcloud-aio-setup/main/deploy-nextcloud-aio.sh -o deploy-nextcloud-aio.sh
-chmod +x deploy-nextcloud-aio.sh
-sudo ./deploy-nextcloud-aio.sh
-```
-```
-
-## Full README Example
-
-````markdown
 # Nextcloud AIO + Saltbox/Traefik Setup
 
 Automated deployment script for Nextcloud All-in-One with Traefik reverse proxy integration.
@@ -22,17 +12,20 @@ curl -fsSL https://raw.githubusercontent.com/iddqd87/nextcloud-aio-setup/main/de
 
 ### Step-by-Step Install
 
-1. Download the script:
+Download the script:
+
 ```
 curl -fsSL https://raw.githubusercontent.com/iddqd87/nextcloud-aio-setup/main/deploy-nextcloud-aio.sh -o deploy-nextcloud-aio.sh
 ```
 
-2. Make it executable:
+Make it executable:
+
 ```
 chmod +x deploy-nextcloud-aio.sh
 ```
 
-3. Run with sudo:
+Run with sudo:
+
 ```
 sudo ./deploy-nextcloud-aio.sh
 ```
@@ -55,18 +48,17 @@ sudo ./deploy-nextcloud-aio.sh
 ## Usage
 
 The script will prompt you to:
+
 1. Enter your base domain (e.g., `example.com`)
 2. Choose subdomain or root domain setup
 3. Confirm DNS and environment settings
 
 ## Post-Installation
 
-Access your Nextcloud AIO interface at:
-```
-https://aio.yourdomain.com
-```
+Access your Nextcloud AIO interface at `https://aio.yourdomain.com`
 
 View deployment info:
+
 ```
 cat /srv/nextcloud-aio/DEPLOYMENT_INFO.txt
 ```
@@ -74,12 +66,14 @@ cat /srv/nextcloud-aio/DEPLOYMENT_INFO.txt
 ## Troubleshooting
 
 Check container status:
+
 ```
 cd /srv/nextcloud-aio
 docker compose ps
 ```
 
 View logs:
+
 ```
 docker compose logs -f
 ```
@@ -89,29 +83,4 @@ docker compose logs -f
 MIT
 ```
 
-## Tips for Copy Buttons
-
-1. **Language identifiers** trigger syntax highlighting and copy buttons:
-   - `bash` - for shell commands
-   - `yaml` - for docker-compose files
-   - `json` - for JSON config
-   - Leave blank for plain text
-
-2. **GitHub automatically adds copy buttons** to all fenced code blocks (```)
-
-3. **Inline code** uses single backticks but won't have copy button:
-   ```
-   Run `docker ps` to check status
-   ```
-
-4. **Multiple commands** - separate each command block for individual copy:
-   ```
-   Download:
-   ```bash
-   curl -O https://example.com/script.sh
-   ```
-   
-   Execute:
-   ```bash
-   sudo ./script.sh
-   ```
+Now **only the actual commands** have code blocks with copy buttons - descriptions and explanations are in plain text.[1]

@@ -51,7 +51,7 @@ After the script completes, you'll see output like:
 ```
 ✅ NEXTCLOUD AIO DEPLOYED!
    
-   AIO Interface: http://95.168.161.8:8080
+   AIO Interface: http://0.0.0.0:8080
 ```
 
 ### Setup Steps

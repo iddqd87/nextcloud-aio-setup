@@ -1,5 +1,5 @@
 #!/bin/bash
-# Nextcloud AIO + Saltbox Traefik Setup
+# Nextcloud AIO + Saltbox Traefik Setup (full reset + optional health check)
 # Run as root: sudo ./deploy-nextcloud-aio.sh
 
 set -e
@@ -10,7 +10,7 @@ PUBLIC_PORT="443"                          # External port for PUBLIC_DOMAIN (us
 APACHE_PORT="11000"                        # Internal AIO Apache port (matches APACHE_PORT env)
 TRAEFIK_DYNAMIC_DIR="/opt/traefik/dynamic" # Traefik dynamic config directory used by Saltbox
 
-echo "=== 🚀 Nextcloud AIO + Saltbox Traefik Setup 🚀 ==="
+echo "=== 🚀 Nextcloud AIO + Saltbox Traefik Setup (FULL RESET) 🚀 ==="
 echo ""
 
 # ============================================================================
@@ -25,143 +25,36 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-# Check for existing installation
-if [ -d /srv/nextcloud-aio ] && [ -n "$(docker volume ls -q | grep nextcloud_aio)" ]; then
-    echo ""
-    echo "⚠️  WARNING: Existing Nextcloud AIO installation detected!"
-    echo "   Location: /srv/nextcloud-aio"
-    echo "   Volumes:  $(docker volume ls -q | grep nextcloud_aio | wc -l) found"
-    echo ""
-    echo "⚠️  This will DESTROY all existing data!"
-    echo ""
-    read -p "Create backup first? (y/n): " BACKUP_CHOICE
-    if [[ $BACKUP_CHOICE =~ ^[Yy]$ ]]; then
-        BACKUP_DIR="/root/nextcloud-aio-backup-$(date +%Y%m%d-%H%M%S)"
-        echo "📦 Creating comprehensive backup: $BACKUP_DIR"
-        mkdir -p "$BACKUP_DIR"/{volumes,config}
-
-        # Backup directory structure
-        echo "  → Backing up /srv/nextcloud-aio..."
-        cp -r /srv/nextcloud-aio "$BACKUP_DIR/config/" 2>/dev/null || true
-
-        # Backup all AIO volumes
-        echo "  → Backing up Docker volumes..."
-        for volume in $(docker volume ls -q | grep nextcloud_aio); do
-            echo "    • $volume"
-            docker run --rm \
-                -v "$volume":/data \
-                -v "$BACKUP_DIR/volumes":/backup \
-                alpine tar czf "/backup/${volume}.tar.gz" -C /data . 2>/dev/null || echo "    ⚠️  Failed to backup $volume"
-        done
-
-        # Backup container metadata
-        echo "  → Backing up container configs..."
-        docker inspect $(docker ps -a -q --filter "name=nextcloud-aio") > "$BACKUP_DIR/config/containers.json" 2>/dev/null || true
-
-        # Create restore script
-        cat > "$BACKUP_DIR/restore.sh" << 'RESTORE_EOF'
-#!/bin/bash
-# Nextcloud AIO Backup Restore Script
-
-set -e
-
-BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-echo "=== 🔄 Nextcloud AIO RESTORE ==="
-echo "Backup location: $BACKUP_DIR"
+# ============================================================================
+# FULL AIO RESET (CONTAINERS + VOLUMES + DIR)
+# ============================================================================
 echo ""
-
-if [[ $EUID -ne 0 ]]; then
-   echo "❌ Must run as root: sudo ./restore.sh"
-   exit 1
-fi
-
-read -p "⚠️  This will OVERWRITE current installation. Continue? (y/n): " CONFIRM
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo "❌ Restore cancelled"
+echo "🧨 Performing full Nextcloud AIO reset..."
+echo ""
+echo "⚠️  This will remove ALL Nextcloud AIO containers, volumes, and config under /srv/nextcloud-aio."
+read -p "Proceed with full reset? (y/n): " RESET_CONFIRM
+if [[ ! "$RESET_CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "❌ Full reset cancelled. Exiting."
     exit 0
 fi
 
-echo "🛑 Stopping Nextcloud AIO..."
-cd /srv/nextcloud-aio 2>/dev/null && docker compose down 2>/dev/null || true
-
-echo "🗑️  Removing current volumes..."
-docker volume ls -q | grep nextcloud_aio | xargs -r docker volume rm 2>/dev/null || true
-
-echo "📁 Restoring directory structure..."
-mkdir -p /srv/nextcloud-aio
-cp -r "$BACKUP_DIR/config/nextcloud-aio/"* /srv/nextcloud-aio/ 2>/dev/null || true
-
-echo "💾 Restoring volumes..."
-for volume_tar in "$BACKUP_DIR/volumes"/*.tar.gz; do
-    if [ -f "$volume_tar" ]; then
-        volume_name=$(basename "$volume_tar" .tar.gz)
-        echo "  → Restoring $volume_name"
-        docker volume create "$volume_name" >/dev/null
-        docker run --rm \
-            -v "$volume_name":/data \
-            -v "$BACKUP_DIR/volumes":/backup \
-            alpine tar xzf "/backup/${volume_name}.tar.gz" -C /data
-    fi
-done
-
-echo "🚀 Starting containers..."
-cd /srv/nextcloud-aio
-docker compose up -d
-
 echo ""
-echo "✅ RESTORE COMPLETE!"
-echo "   Check status: docker compose ps"
-echo "   View logs: docker compose logs -f"
-RESTORE_EOF
+echo "🛑 Stopping and removing any existing AIO containers..."
+docker rm -f $(docker ps -aq --filter "name=nextcloud-aio") 2>/dev/null || true
 
-        chmod +x "$BACKUP_DIR/restore.sh"
+echo "🗑️  Removing AIO-related volumes..."
+docker volume rm $(docker volume ls -q | grep -E '^nextcloud_aio' ) 2>/dev/null || true
 
-        # Validate backup
-        echo ""
-        echo "🔍 Validating backup..."
-        BACKUP_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
-        VOLUME_COUNT=$(ls -1 "$BACKUP_DIR/volumes"/*.tar.gz 2>/dev/null | wc -l)
+echo "🧹 Removing /srv/nextcloud-aio directory..."
+rm -rf /srv/nextcloud-aio
 
-        if [ -f "$BACKUP_DIR/restore.sh" ] && [ "$VOLUME_COUNT" -gt 0 ]; then
-            echo "✅ Backup created successfully!"
-            echo "   Location: $BACKUP_DIR"
-            echo "   Size: $BACKUP_SIZE"
-            echo "   Volumes: $VOLUME_COUNT backed up"
-            echo "   Restore: sudo $BACKUP_DIR/restore.sh"
-            echo ""
-        else
-            echo "⚠️  Backup validation failed - some files missing"
-            echo "   Check $BACKUP_DIR manually"
-        fi
-    fi
-
-    echo ""
-    read -p "Continue with clean installation? (y/n): " CONFIRM
-    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        echo "❌ Installation cancelled"
-        exit 0
-    fi
-fi
-
-# ============================================================================
-# CLEANUP
-# ============================================================================
+echo "✅ Full AIO reset complete"
 echo ""
-echo "🧹 Cleaning previous installation..."
-cd /srv 2>/dev/null || true
-docker compose down --remove-orphans --volumes 2>/dev/null || true
-docker stop $(docker ps -q --filter "name=nextcloud-aio") 2>/dev/null || true
-docker rm $(docker ps -a -q --filter "name=nextcloud-aio") 2>/dev/null || true
-docker volume rm $(docker volume ls -q | grep nextcloud_aio) 2>/dev/null || true
-rm -rf /srv/nextcloud-aio/
-echo "✅ Cleanup complete"
 
 # ============================================================================
 # ENVIRONMENT VALIDATION
 # ============================================================================
-echo ""
-echo "🔍 Validating environment..."
+echo "🔍 Validating environment (Docker, Compose, Saltbox, Traefik)..."
 
 # Check Docker
 if ! command -v docker &> /dev/null; then
@@ -233,11 +126,11 @@ else
 fi
 
 echo "✅ Environment validated"
+echo ""
 
 # ============================================================================
 # GENERATE TRAEFIK DYNAMIC CONFIG FOR NEXTCLOUD AIO
 # ============================================================================
-echo ""
 echo "🧩 Writing Traefik dynamic config for Nextcloud AIO..."
 mkdir -p "$TRAEFIK_DYNAMIC_DIR"
 
@@ -282,11 +175,11 @@ echo "✅ Traefik dynamic config written to ${TRAEFIK_DYNAMIC_DIR}/nextcloud-aio
 echo "🔄 Restarting Traefik to apply config..."
 docker restart traefik >/dev/null
 echo "✅ Traefik restarted"
+echo ""
 
 # ============================================================================
 # PORT AVAILABILITY CHECK
 # ============================================================================
-echo ""
 echo "🔍 Checking port availability..."
 if ss -tulpn | grep -q ":8080 "; then
     echo "⚠️  WARNING: Port 8080 already in use!"
@@ -295,11 +188,11 @@ if ss -tulpn | grep -q ":8080 "; then
     [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
 fi
 echo "✅ Port 8080 available"
+echo ""
 
 # ============================================================================
 # DOCKER COMPOSE GENERATION
 # ============================================================================
-echo ""
 echo "📁 Creating /srv/nextcloud-aio..."
 mkdir -p /srv/nextcloud-aio
 cd /srv/nextcloud-aio
@@ -338,20 +231,33 @@ networks:
 EOF
 
 echo "✅ docker-compose.yml created"
+echo ""
 
 # ============================================================================
 # DEPLOYMENT
 # ============================================================================
-echo ""
 echo "🚀 Starting Nextcloud AIO..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 docker compose up -d
+echo ""
+
+# ============================================================================
+# OPTIONAL HEALTH CHECK PROMPT
+# ============================================================================
+read -p "Run post-install health checks (backend + public URL)? (y/n): " HC_CONFIRM
+if [[ ! "$HC_CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "✅ Setup finished. Skipping health checks."
+    exit 0
+fi
+
+echo ""
+echo "🩺 Running post-install health checks..."
+echo ""
 
 # ============================================================================
 # WAIT FOR LOGIN PAGE TO BE READY
 # ============================================================================
-echo ""
 echo "⏳ Waiting for AIO login page to become ready..."
 echo ""
 
@@ -394,134 +300,7 @@ else
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 fi
 
-# ============================================================================
-# EXTRACT AND PRINT AIO PASSPHRASE
-# ============================================================================
-echo ""
-echo "🔑 Retrieving AIO login passphrase from configuration..."
-echo ""
-
-PASSPHRASE_JSON=$(docker exec nextcloud-aio-mastercontainer cat /mnt/docker-aio-config/data/configuration.json 2>/dev/null || echo "")
-AIO_PASSPHRASE=$(echo "$PASSPHRASE_JSON" | grep -oP '"password"\s*:\s*"\K[^"]+' || echo "")
-
-if [ -n "$AIO_PASSPHRASE" ]; then
-    echo "✅ AIO login passphrase detected:"
-    echo ""
-    echo "   ${AIO_PASSPHRASE}"
-    echo ""
-    echo "➡️  Use this passphrase at: http://${SERVER_IP}:8080"
-else
-    echo "⚠️  Could not read passphrase from configuration.json."
-    echo "    Manual retrieval:"
-    echo "    docker exec nextcloud-aio-mastercontainer cat /mnt/docker-aio-config/data/configuration.json | grep password"
-fi
-
-echo ""
-echo "📋 Access Information:"
-echo "   🌐 AIO Login:       http://${SERVER_IP}:8080"
-echo ""
-
-# ============================================================================
-# WAIT FOR CONTAINERS PAGE AFTER LOGIN
-# ============================================================================
-echo "⏳ Waiting for installer / containers page after login..."
-echo ""
-
-POST_MAX_WAIT=120
-POST_ELAPSED=0
-CONTAINERS_READY=false
-
-while [ $POST_ELAPSED -lt $POST_MAX_WAIT ]; do
-    HTTP_CODE_CONTAINERS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080/containers" 2>/dev/null || echo "000")
-
-    if [[ "$HTTP_CODE_CONTAINERS" == "200" ]] || [[ "$HTTP_CODE_CONTAINERS" == "302" ]]; then
-        echo "   ✅ Containers page is responding (HTTP $HTTP_CODE_CONTAINERS)"
-        CONTAINERS_READY=true
-        break
-    else
-        # Only log occasionally to avoid spam
-        if [ $((POST_ELAPSED % 30)) -eq 0 ]; then
-            echo "   ⏳ Installer still initializing... (last HTTP $HTTP_CODE_CONTAINERS)"
-        fi
-    fi
-
-    sleep 5
-    POST_ELAPSED=$((POST_ELAPSED + 5))
-done
-
-echo ""
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if [ "$CONTAINERS_READY" = true ]; then
-    echo "✅ NEXTCLOUD AIO INSTALLER / CONTAINERS PAGE IS READY"
-else
-    echo "⚠️  AIO installer may still be initializing, but should be reachable."
-fi
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "📚 In the AIO web UI:"
-echo "   • Select the containers/services you want to install"
-echo "   • Click the button to start the installation"
-echo "   • This script will now monitor container startup and check your URLs"
-echo ""
-
-# ============================================================================
-# MONITOR AIO CHILD CONTAINERS
-# ============================================================================
-echo "⏳ Monitoring Nextcloud AIO containers (this may take several minutes)..."
-echo ""
-
-CHILD_MAX_WAIT=600
-CHILD_ELAPSED=0
-ALL_UP=false
-
-while [ $CHILD_ELAPSED -lt $CHILD_MAX_WAIT ]; do
-    echo "   ⏳ Checking container states... (t+${CHILD_ELAPSED}s)"
-
-    # List containers starting with nextcloud-aio-
-    AIO_CONTAINERS=$(docker ps --format '{{.Names}}' | grep '^nextcloud-aio-' || true)
-
-    if [ -z "$AIO_CONTAINERS" ]; then
-        echo "   ⚠️  No child containers found yet. Waiting..."
-    else
-        # Assume all are good until one fails
-        ALL_RUNNING=true
-        for c in $AIO_CONTAINERS; do
-            STATUS=$(docker inspect "$c" 2>/dev/null | jq -r '.[0].State.Status' 2>/dev/null || echo "unknown")
-            HEALTH=$(docker inspect "$c" 2>/dev/null | jq -r '.[0].State.Health.Status' 2>/dev/null || echo "none")
-            echo "      • $c → status=$STATUS health=$HEALTH"
-            if [[ "$STATUS" != "running" ]] && [[ "$HEALTH" != "healthy" ]]; then
-                ALL_RUNNING=false
-            fi
-        done
-
-        if [ "$ALL_RUNNING" = true ]; then
-            echo ""
-            echo "   ✅ All Nextcloud AIO containers appear to be running/healthy"
-            ALL_UP=true
-            break
-        else
-            echo "   ⏳ Not all containers are ready yet..."
-        fi
-    fi
-
-    sleep 10
-    CHILD_ELAPSED=$((CHILD_ELAPSED + 10))
-    echo ""
-done
-
-echo ""
-if [ "$ALL_UP" != true ]; then
-    echo "⚠️  Timed out waiting for all child containers. URLs may still become available shortly."
-    echo ""
-fi
-
-# ============================================================================
-# FINAL URL CHECKS (PUBLIC DOMAIN + BACKEND IP:PORT)
-# ============================================================================
-echo "🌐 Checking external/public access URLs..."
-echo ""
-
-# 1) Check public domain via Traefik/Cloudflare (HTTPS)
+# 1) Public domain via Traefik/Cloudflare (HTTPS)
 if [ -n "$PUBLIC_DOMAIN" ]; then
     PUBLIC_URL="https://${PUBLIC_DOMAIN}"
     if [ "$PUBLIC_PORT" != "443" ]; then
@@ -531,10 +310,11 @@ if [ -n "$PUBLIC_DOMAIN" ]; then
     HTTP_CODE_PUBLIC=$(curl -k -s -o /dev/null -w "%{http_code}" "$PUBLIC_URL" 2>/dev/null || echo "000")
     echo "   • Public domain: $PUBLIC_URL → HTTP $HTTP_CODE_PUBLIC"
 else
+    HTTP_CODE_PUBLIC="---"
     echo "   • Public domain: (not configured in script, set PUBLIC_DOMAIN to enable check)"
 fi
 
-# 2) Check bare IP + Apache port (direct backend check)
+# 2) Bare IP + Apache port (direct backend check)
 BACKEND_URL="http://${SERVER_IP}:${APACHE_PORT}"
 HTTP_CODE_BACKEND=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL" 2>/dev/null || echo "000")
 echo "   • Backend (Apache/APACHE_PORT): $BACKEND_URL → HTTP $HTTP_CODE_BACKEND"

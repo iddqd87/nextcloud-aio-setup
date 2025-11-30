@@ -82,5 +82,3 @@ docker compose logs -f
 
 MIT
 ```
-
-Now **only the actual commands** have code blocks with copy buttons - descriptions and explanations are in plain text.[1]

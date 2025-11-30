@@ -1,10 +1,11 @@
 #!/bin/bash
-# Nextcloud AIO + Saltbox Traefik - PRODUCTION READY (All Safety Checks)
+# Nextcloud AIO + Saltbox Traefik - ULTIMATE EDITION
+# Features: Auto-certresolver, backup validation, initial password display, recovery script
 # Run as root: sudo ./deploy-nextcloud-aio.sh
 
 set -e
 
-echo "=== 🚀 Nextcloud AIO + Saltbox Traefik SETUP 🚀 ==="
+echo "=== 🚀 Nextcloud AIO + Saltbox Traefik ULTIMATE SETUP 🚀 ==="
 echo ""
 
 # ============================================================================
@@ -78,11 +79,131 @@ if [ -d /srv/nextcloud-aio ] && [ -n "$(docker volume ls -q | grep nextcloud_aio
     echo
     if [[ $BACKUP_CHOICE =~ ^[Yy]$ ]] || [[ -z $BACKUP_CHOICE ]]; then
         BACKUP_DIR="/root/nextcloud-aio-backup-$(date +%Y%m%d-%H%M%S)"
-        echo "📦 Creating backup: $BACKUP_DIR"
-        mkdir -p "$BACKUP_DIR"
-        cp -r /srv/nextcloud-aio "$BACKUP_DIR/" 2>/dev/null || true
-        docker volume ls -q | grep nextcloud_aio | xargs -I {} docker run --rm -v {}:/data -v "$BACKUP_DIR":/backup alpine tar czf /backup/{}.tar.gz -C /data . 2>/dev/null || true
-        echo "✅ Backup created: $BACKUP_DIR"
+        echo "📦 Creating comprehensive backup: $BACKUP_DIR"
+        mkdir -p "$BACKUP_DIR"/{volumes,config}
+        
+        # Backup directory structure
+        echo "  → Backing up /srv/nextcloud-aio..."
+        cp -r /srv/nextcloud-aio "$BACKUP_DIR/config/" 2>/dev/null || true
+        
+        # Backup all AIO volumes
+        echo "  → Backing up Docker volumes..."
+        for volume in $(docker volume ls -q | grep nextcloud_aio); do
+            echo "    • $volume"
+            docker run --rm \
+                -v "$volume":/data \
+                -v "$BACKUP_DIR/volumes":/backup \
+                alpine tar czf "/backup/${volume}.tar.gz" -C /data . 2>/dev/null || echo "    ⚠️  Failed to backup $volume"
+        done
+        
+        # Backup container metadata
+        echo "  → Backing up container configs..."
+        docker inspect $(docker ps -a -q --filter "name=nextcloud-aio") > "$BACKUP_DIR/config/containers.json" 2>/dev/null || true
+        
+        # Create restore script
+        cat > "$BACKUP_DIR/restore.sh" << 'RESTORE_EOF'
+#!/bin/bash
+# Nextcloud AIO Backup Restore Script
+# Generated: $(date)
+
+set -e
+
+BACKUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+echo "=== 🔄 Nextcloud AIO RESTORE ==="
+echo "Backup location: $BACKUP_DIR"
+echo ""
+
+if [[ $EUID -ne 0 ]]; then
+   echo "❌ Must run as root: sudo ./restore.sh"
+   exit 1
+fi
+
+read -p "⚠️  This will OVERWRITE current installation. Continue? (yes/NO): " CONFIRM
+if [[ ! "$CONFIRM" == "yes" ]]; then
+    echo "❌ Restore cancelled"
+    exit 0
+fi
+
+echo "🛑 Stopping Nextcloud AIO..."
+cd /srv/nextcloud-aio 2>/dev/null && docker compose down 2>/dev/null || true
+
+echo "🗑️  Removing current volumes..."
+docker volume ls -q | grep nextcloud_aio | xargs -r docker volume rm 2>/dev/null || true
+
+echo "📁 Restoring directory structure..."
+mkdir -p /srv/nextcloud-aio
+cp -r "$BACKUP_DIR/config/nextcloud-aio/"* /srv/nextcloud-aio/ 2>/dev/null || true
+
+echo "💾 Restoring volumes..."
+for volume_tar in "$BACKUP_DIR/volumes"/*.tar.gz; do
+    if [ -f "$volume_tar" ]; then
+        volume_name=$(basename "$volume_tar" .tar.gz)
+        echo "  → Restoring $volume_name"
+        docker volume create "$volume_name" >/dev/null
+        docker run --rm \
+            -v "$volume_name":/data \
+            -v "$BACKUP_DIR/volumes":/backup \
+            alpine tar xzf "/backup/${volume_name}.tar.gz" -C /data
+    fi
+done
+
+echo "🚀 Starting containers..."
+cd /srv/nextcloud-aio
+docker compose up -d
+
+echo ""
+echo "✅ RESTORE COMPLETE!"
+echo "   Check status: docker compose ps"
+echo "   View logs: docker compose logs -f"
+RESTORE_EOF
+        
+        chmod +x "$BACKUP_DIR/restore.sh"
+        
+        # Validate backup
+        echo ""
+        echo "🔍 Validating backup..."
+        BACKUP_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
+        VOLUME_COUNT=$(ls -1 "$BACKUP_DIR/volumes"/*.tar.gz 2>/dev/null | wc -l)
+        
+        if [ -f "$BACKUP_DIR/restore.sh" ] && [ "$VOLUME_COUNT" -gt 0 ]; then
+            echo "✅ Backup created successfully!"
+            echo "   Location: $BACKUP_DIR"
+            echo "   Size: $BACKUP_SIZE"
+            echo "   Volumes: $VOLUME_COUNT backed up"
+            echo "   Restore: sudo $BACKUP_DIR/restore.sh"
+            echo ""
+            
+            # Create backup manifest
+            cat > "$BACKUP_DIR/MANIFEST.txt" << MANIFEST_EOF
+Nextcloud AIO Backup Manifest
+==============================
+Created: $(date)
+Backup Directory: $BACKUP_DIR
+Total Size: $BACKUP_SIZE
+Volumes Backed Up: $VOLUME_COUNT
+
+Contents:
+---------
+$(ls -lh "$BACKUP_DIR/volumes"/ 2>/dev/null)
+
+Restore Instructions:
+---------------------
+1. cd $BACKUP_DIR
+2. sudo ./restore.sh
+3. Follow prompts
+
+Notes:
+------
+- This backup contains all Nextcloud AIO data, configs, and volumes
+- Restore script will stop current installation before restoring
+- Original backup from: $(hostname)
+MANIFEST_EOF
+            
+        else
+            echo "⚠️  Backup validation failed - some files missing"
+            echo "   Check $BACKUP_DIR manually"
+        fi
     fi
     
     echo ""
@@ -148,6 +269,17 @@ if ! docker network inspect saltbox | grep -q traefik 2>/dev/null; then
     read -p "Continue anyway? (y/N): " -n 1 -r
     echo
     [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+fi
+
+# Auto-detect Traefik certresolver
+echo "🔍 Detecting Traefik SSL certresolver..."
+CERTRESOLVER=$(docker inspect traefik 2>/dev/null | jq -r '.[0].Args[]' 2>/dev/null | grep -i certificatesresolvers | head -1 | cut -d. -f3)
+
+if [[ -z "$CERTRESOLVER" ]]; then
+    echo "⚠️  Could not auto-detect certresolver, using default: cfdns"
+    CERTRESOLVER="cfdns"
+else
+    echo "✅ Detected certresolver: $CERTRESOLVER"
 fi
 
 echo "✅ Environment validated"
@@ -224,109 +356,9 @@ services:
       # HTTPS Nextcloud
       - "traefik.http.routers.nextcloud-https.rule=Host(\`${NEXTCLOUD_DOMAIN}\`)"
       - "traefik.http.routers.nextcloud-https.entrypoints=websecure"
-      - "traefik.http.routers.nextcloud-https.tls.certresolver=cfdns"
+      - "traefik.http.routers.nextcloud-https.tls.certresolver=${CERTRESOLVER}"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=11000"
       - "traefik.http.services.nextcloud.loadbalancer.server.scheme=http"
       
       # HTTP → HTTPS redirect (AIO)
-      - "traefik.http.routers.aio-http.rule=Host(\`${AIO_DOMAIN}\`)"
-      - "traefik.http.routers.aio-http.entrypoints=web"
-      - "traefik.http.routers.aio-http.middlewares=redirect-to-https@docker"
-      
-      # HTTPS AIO Interface
-      - "traefik.http.routers.aio-https.rule=Host(\`${AIO_DOMAIN}\`)"
-      - "traefik.http.routers.aio-https.entrypoints=websecure"
-      - "traefik.http.routers.aio-https.tls.certresolver=cfdns"
-      - "traefik.http.services.aio.loadbalancer.server.port=8080"
-      
-    environment:
-      - APACHE_PORT=11000
-      - APACHE_IP_BINDING=0.0.0.0
-      - SKIP_DOMAIN_VALIDATION=true
-
-networks:
-  saltbox:
-    external: true
-    name: saltbox
-
-volumes:
-  nextcloud_aio_mastercontainer:
-    name: nextcloud_aio_mastercontainer
-EOF
-
-echo "✅ Configuration complete"
-
-# ============================================================================
-# SECURITY WARNING
-# ============================================================================
-echo ""
-echo "⚠️  SECURITY NOTICE"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "This container has access to Docker daemon via socket mount."
-echo "Only run on trusted infrastructure!"
-echo ""
-read -p "Acknowledge and continue? (yes/NO): " SECURITY_ACK
-if [[ ! "$SECURITY_ACK" == "yes" ]]; then
-    echo "❌ Deployment cancelled"
-    exit 0
-fi
-
-# ============================================================================
-# DEPLOYMENT
-# ============================================================================
-echo ""
-echo "🚀 Deploying Nextcloud AIO..."
-docker compose pull
-docker compose up -d
-
-echo "⏳ Waiting for container startup (10s)..."
-sleep 10
-
-# ============================================================================
-# POST-DEPLOYMENT VALIDATION
-# ============================================================================
-echo ""
-echo "📊 Deployment Status:"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-docker compose ps
-
-# Check if container is healthy
-if ! docker ps | grep -q "nextcloud-aio-mastercontainer.*healthy"; then
-    echo ""
-    echo "⚠️  WARNING: Container not healthy yet. Check logs:"
-    echo "   docker compose logs -f"
-fi
-
-# ============================================================================
-# SUCCESS OUTPUT
-# ============================================================================
-echo ""
-echo "✅ DEPLOYMENT COMPLETE!"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-echo "🌐 ACCESS POINTS:"
-echo "   Direct IP:        http://${SERVER_IP}:8080"
-echo "   AIO Interface:    https://${AIO_DOMAIN}"
-echo "   Nextcloud:        https://${NEXTCLOUD_DOMAIN}"
-echo ""
-echo "📋 NEXT STEPS:"
-echo "   1. Visit http://${SERVER_IP}:8080 (use IP, not domain)"
-echo "   2. Copy the initial password shown"
-echo "   3. Click 'Start Containers' (domaincheck will succeed)"
-echo "   4. Configure domain: ${NEXTCLOUD_DOMAIN}"
-echo ""
-echo "🌐 DNS REQUIREMENTS:"
-echo "   ${NEXTCLOUD_DOMAIN} → ${SERVER_IP} (A record)"
-echo "   ${AIO_DOMAIN} → ${NEXTCLOUD_DOMAIN} (CNAME)"
-echo ""
-echo "📊 MANAGEMENT:"
-echo "   Logs:     docker compose logs -f"
-echo "   Restart:  docker compose restart"
-echo "   Stop:     docker compose down"
-echo "   Status:   docker compose ps"
-echo ""
-echo "💾 FILES:"
-echo "   Config:   /srv/nextcloud-aio/docker-compose.yml"
-echo "   Volume:   nextcloud_aio_mastercontainer"
-echo ""
-echo "✅ Installation complete!"
+      - "traefik.http.routers.

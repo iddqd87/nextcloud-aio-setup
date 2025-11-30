@@ -1,57 +1,10 @@
 #!/bin/bash
-# Nextcloud AIO + Saltbox Traefik - ULTIMATE EDITION v2.0
-# Features: Auto-certresolver, backup validation, initial password display, recovery script
+# Nextcloud AIO + Saltbox Traefik Setup
 # Run as root: sudo ./deploy-nextcloud-aio.sh
 
 set -e
 
-echo "=== 🚀 Nextcloud AIO + Saltbox Traefik ULTIMATE SETUP 🚀 ==="
-echo ""
-
-# ============================================================================
-# INTERACTIVE DOMAIN CONFIGURATION
-# ============================================================================
-echo "📝 Domain Configuration"
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo ""
-read -p "Enter your base domain (e.g., myserver.net): " BASE_DOMAIN
-
-if [[ -z "$BASE_DOMAIN" ]]; then
-    echo "❌ Base domain required!"
-    exit 1
-fi
-
-echo ""
-echo "Choose domain configuration:"
-echo "  1) Subdomain:    nextcloud.${BASE_DOMAIN}"
-echo "  2) Root domain:  ${BASE_DOMAIN}"
-echo "  3) Custom:       [specify]"
-echo ""
-read -p "Selection (1-3): " DOMAIN_CHOICE
-
-case $DOMAIN_CHOICE in
-    1)
-        NEXTCLOUD_DOMAIN="nextcloud.${BASE_DOMAIN}"
-        AIO_DOMAIN="aio.${BASE_DOMAIN}"
-        ;;
-    2)
-        NEXTCLOUD_DOMAIN="${BASE_DOMAIN}"
-        AIO_DOMAIN="aio.${BASE_DOMAIN}"
-        ;;
-    3)
-        read -p "Enter Nextcloud domain: " NEXTCLOUD_DOMAIN
-        read -p "Enter AIO interface domain: " AIO_DOMAIN
-        ;;
-    *)
-        echo "❌ Invalid selection"
-        exit 1
-        ;;
-esac
-
-echo ""
-echo "✅ Configuration:"
-echo "   Nextcloud: ${NEXTCLOUD_DOMAIN}"
-echo "   AIO:       ${AIO_DOMAIN}"
+echo "=== 🚀 Nextcloud AIO + Saltbox Traefik Setup 🚀 ==="
 echo ""
 
 # ============================================================================
@@ -75,9 +28,8 @@ if [ -d /srv/nextcloud-aio ] && [ -n "$(docker volume ls -q | grep nextcloud_aio
     echo ""
     echo "⚠️  This will DESTROY all existing data!"
     echo ""
-    read -p "Create backup first? (Y/n): " -n 1 -r BACKUP_CHOICE
-    echo
-    if [[ $BACKUP_CHOICE =~ ^[Yy]$ ]] || [[ -z $BACKUP_CHOICE ]]; then
+    read -p "Create backup first? (y/n): " BACKUP_CHOICE
+    if [[ $BACKUP_CHOICE =~ ^[Yy]$ ]]; then
         BACKUP_DIR="/root/nextcloud-aio-backup-$(date +%Y%m%d-%H%M%S)"
         echo "📦 Creating comprehensive backup: $BACKUP_DIR"
         mkdir -p "$BACKUP_DIR"/{volumes,config}
@@ -119,8 +71,8 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-read -p "⚠️  This will OVERWRITE current installation. Continue? (yes/NO): " CONFIRM
-if [[ ! "$CONFIRM" == "yes" ]]; then
+read -p "⚠️  This will OVERWRITE current installation. Continue? (y/n): " CONFIRM
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
     echo "❌ Restore cancelled"
     exit 0
 fi
@@ -173,33 +125,6 @@ RESTORE_EOF
             echo "   Volumes: $VOLUME_COUNT backed up"
             echo "   Restore: sudo $BACKUP_DIR/restore.sh"
             echo ""
-            
-            # Create backup manifest
-            cat > "$BACKUP_DIR/MANIFEST.txt" << MANIFEST_EOF
-Nextcloud AIO Backup Manifest
-==============================
-Created: $(date)
-Backup Directory: $BACKUP_DIR
-Total Size: $BACKUP_SIZE
-Volumes Backed Up: $VOLUME_COUNT
-
-Contents:
----------
-$(ls -lh "$BACKUP_DIR/volumes"/ 2>/dev/null)
-
-Restore Instructions:
----------------------
-1. cd $BACKUP_DIR
-2. sudo ./restore.sh
-3. Follow prompts
-
-Notes:
-------
-- This backup contains all Nextcloud AIO data, configs, and volumes
-- Restore script will stop current installation before restoring
-- Original backup from: $(hostname)
-MANIFEST_EOF
-            
         else
             echo "⚠️  Backup validation failed - some files missing"
             echo "   Check $BACKUP_DIR manually"
@@ -207,8 +132,8 @@ MANIFEST_EOF
     fi
     
     echo ""
-    read -p "Continue with clean installation? (yes/NO): " CONFIRM
-    if [[ ! "$CONFIRM" == "yes" ]]; then
+    read -p "Continue with clean installation? (y/n): " CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
         echo "❌ Installation cancelled"
         exit 0
     fi
@@ -258,16 +183,14 @@ if ! docker ps | grep -q traefik; then
     echo "⚠️  WARNING: Traefik container not found!"
     echo "Available containers:"
     docker ps --format "{{.Names}}"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
+    read -p "Continue anyway? (y/n): " REPLY
     [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
 fi
 
 # Check if Traefik is in saltbox network
 if ! docker network inspect saltbox | grep -q traefik 2>/dev/null; then
     echo "⚠️  WARNING: Traefik not detected in saltbox network!"
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
+    read -p "Continue anyway? (y/n): " REPLY
     [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
 fi
 
@@ -311,8 +234,7 @@ echo "🔍 Checking port availability..."
 if ss -tulpn | grep -q ":8080 "; then
     echo "⚠️  WARNING: Port 8080 already in use!"
     ss -tulpn | grep ":8080 "
-    read -p "Continue anyway? (y/N): " -n 1 -r
-    echo
+    read -p "Continue anyway? (y/n): " REPLY
     [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
 fi
 echo "✅ Port 8080 available"
@@ -326,7 +248,7 @@ mkdir -p /srv/nextcloud-aio
 cd /srv/nextcloud-aio
 
 echo "📄 Generating docker-compose.yml..."
-cat > docker-compose.yml << EOF
+cat > docker-compose.yml << 'EOF'
 version: '3.8'
 
 services:
@@ -340,43 +262,14 @@ services:
       - nextcloud_aio_mastercontainer:/mnt/docker-aio-config
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
-      - 8080:8080    # AIO Interface
+      - 8080:8080
     networks:
       - saltbox
     environment:
       - APACHE_PORT=11000
       - APACHE_IP_BINDING=0.0.0.0
-      - SKIP_DOMAIN_VALIDATION=false
+      - SKIP_DOMAIN_VALIDATION=true
       - NEXTCLOUD_DATADIR=/mnt/docker-aio-data
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=saltbox"
-      
-      # HTTP → HTTPS redirect (Nextcloud)
-      - "traefik.http.routers.nextcloud-http.rule=Host(\`${NEXTCLOUD_DOMAIN}\`)"
-      - "traefik.http.routers.nextcloud-http.entrypoints=web"
-      - "traefik.http.routers.nextcloud-http.middlewares=redirect-to-https@docker"
-      
-      # HTTPS Nextcloud
-      - "traefik.http.routers.nextcloud-https.rule=Host(\`${NEXTCLOUD_DOMAIN}\`)"
-      - "traefik.http.routers.nextcloud-https.entrypoints=websecure"
-      - "traefik.http.routers.nextcloud-https.tls.certresolver=${CERTRESOLVER}"
-      - "traefik.http.routers.nextcloud-https.service=nextcloud"
-      - "traefik.http.services.nextcloud.loadbalancer.server.port=11000"
-      - "traefik.http.services.nextcloud.loadbalancer.server.scheme=http"
-      
-      # HTTP → HTTPS redirect (AIO Interface)
-      - "traefik.http.routers.aio-http.rule=Host(\`${AIO_DOMAIN}\`)"
-      - "traefik.http.routers.aio-http.entrypoints=web"
-      - "traefik.http.routers.aio-http.middlewares=redirect-to-https@docker"
-      
-      # HTTPS AIO Interface
-      - "traefik.http.routers.aio-https.rule=Host(\`${AIO_DOMAIN}\`)"
-      - "traefik.http.routers.aio-https.entrypoints=websecure"
-      - "traefik.http.routers.aio-https.tls.certresolver=${CERTRESOLVER}"
-      - "traefik.http.routers.aio-https.service=aio"
-      - "traefik.http.services.aio.loadbalancer.server.port=8080"
-      - "traefik.http.services.aio.loadbalancer.server.scheme=http"
 
 volumes:
   nextcloud_aio_mastercontainer:
@@ -390,34 +283,6 @@ EOF
 echo "✅ docker-compose.yml created"
 
 # ============================================================================
-# DNS VERIFICATION
-# ============================================================================
-echo ""
-echo "🔍 Verifying DNS records..."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-for domain in "$NEXTCLOUD_DOMAIN" "$AIO_DOMAIN"; do
-    echo "Checking: $domain"
-    DNS_IP=$(dig +short "$domain" @1.1.1.1 | grep -E '^[0-9.]+$' | head -1)
-    
-    if [[ -z "$DNS_IP" ]]; then
-        echo "  ⚠️  No DNS record found"
-    elif [[ "$DNS_IP" == "$SERVER_IP" ]]; then
-        echo "  ✅ $DNS_IP (matches server)"
-    else
-        echo "  ⚠️  $DNS_IP (does NOT match server: $SERVER_IP)"
-    fi
-done
-
-echo ""
-read -p "DNS warnings can be ignored if using Cloudflare proxy. Continue? (Y/n): " -n 1 -r DNS_CONTINUE
-echo
-if [[ $DNS_CONTINUE =~ ^[Nn]$ ]]; then
-    echo "❌ Deployment cancelled"
-    exit 0
-fi
-
-# ============================================================================
 # DEPLOYMENT
 # ============================================================================
 echo ""
@@ -427,66 +292,36 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 docker compose up -d
 
 echo ""
-echo "⏳ Waiting for container to initialize (15 seconds)..."
-sleep 15
-
-# ============================================================================
-# PASSWORD EXTRACTION
-# ============================================================================
-echo ""
-echo "🔑 Extracting initial AIO password..."
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-AIO_PASSWORD=""
-for i in {1..10}; do
-    AIO_PASSWORD=$(docker logs nextcloud-aio-mastercontainer 2>&1 | grep -oP 'Initial password for AIO: \K[A-Za-z0-9]+' | tail -1)
-    if [[ -n "$AIO_PASSWORD" ]]; then
-        break
-    fi
-    echo "  Attempt $i/10: Password not yet available, waiting..."
-    sleep 3
-done
+echo "⏳ Waiting for container to initialize (10 seconds)..."
+sleep 10
 
 # ============================================================================
 # FINAL STATUS
 # ============================================================================
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "✅ NEXTCLOUD AIO DEPLOYMENT COMPLETE!"
+echo "✅ NEXTCLOUD AIO DEPLOYED!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "📋 Installation Summary:"
-echo "   Nextcloud URL:     https://${NEXTCLOUD_DOMAIN}"
-echo "   AIO Interface:     https://${AIO_DOMAIN}"
-echo "   Server IP:         $SERVER_IP"
-echo "   Certresolver:      $CERTRESOLVER"
-echo ""
-
-if [[ -n "$AIO_PASSWORD" ]]; then
-    echo "🔐 Initial AIO Password:"
-    echo "   $AIO_PASSWORD"
-    echo ""
-    echo "⚠️  SAVE THIS PASSWORD - Required for first login!"
-else
-    echo "⚠️  Could not auto-extract password."
-    echo "   Run: docker logs nextcloud-aio-mastercontainer | grep 'Initial password'"
-fi
-
+echo "📋 Access Information:"
+echo "   AIO Interface: http://${SERVER_IP}:8080"
+echo "   Server IP:     ${SERVER_IP}"
+echo "   Certresolver:  ${CERTRESOLVER}"
 echo ""
 echo "📚 Next Steps:"
-echo "   1. Visit: https://${AIO_DOMAIN}"
-echo "   2. Login with password above"
-echo "   3. Configure Nextcloud domain: ${NEXTCLOUD_DOMAIN}"
-echo "   4. Complete AIO setup wizard"
+echo "   1. Open: http://${SERVER_IP}:8080"
+echo "   2. Copy the password shown on screen"
+echo "   3. Enter your domain when prompted"
+echo "   4. Complete the AIO setup wizard"
+echo ""
+echo "💡 Tip: The AIO interface will show your initial password"
 echo ""
 echo "🔧 Useful Commands:"
+echo "   Location:  cd /srv/nextcloud-aio"
 echo "   Status:    docker compose ps"
 echo "   Logs:      docker compose logs -f"
 echo "   Restart:   docker compose restart"
 echo "   Stop:      docker compose down"
-echo ""
-echo "📖 Documentation:"
-echo "   https://github.com/nextcloud/all-in-one"
 echo ""
 
 # Save deployment info
@@ -494,18 +329,14 @@ cat > /srv/nextcloud-aio/DEPLOYMENT_INFO.txt << DEPLOY_EOF
 Nextcloud AIO Deployment Information
 =====================================
 Deployed: $(date)
-Server IP: $SERVER_IP
-Nextcloud Domain: ${NEXTCLOUD_DOMAIN}
-AIO Interface: ${AIO_DOMAIN}
+Server IP: ${SERVER_IP}
 Certresolver: ${CERTRESOLVER}
-Initial Password: ${AIO_PASSWORD:-"Check logs: docker logs nextcloud-aio-mastercontainer"}
 
-Access URLs:
-- Nextcloud: https://${NEXTCLOUD_DOMAIN}
-- AIO Admin: https://${AIO_DOMAIN}
+Access:
+- AIO Interface: http://${SERVER_IP}:8080
 
 Management:
-- Config: /srv/nextcloud-aio
+- Location: /srv/nextcloud-aio
 - Logs: docker compose logs -f
 - Status: docker compose ps
 

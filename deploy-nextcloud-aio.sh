@@ -5,10 +5,10 @@
 set -e
 
 # User-configurable external access settings
-PUBLIC_DOMAIN="nextcloud.meatf.art"   # Your Nextcloud domain
-PUBLIC_PORT="443"                     # External port for PUBLIC_DOMAIN (usually 443)
-APACHE_PORT="11000"                   # Internal AIO Apache port (matches APACHE_PORT env)
-TRAEFIK_DYNAMIC_DIR="/opt/traefik/dynamic"  # Traefik dynamic config directory used by Saltbox
+PUBLIC_DOMAIN="nextcloud.meatf.art"        # Your Nextcloud domain
+PUBLIC_PORT="443"                          # External port for PUBLIC_DOMAIN (usually 443)
+APACHE_PORT="11000"                        # Internal AIO Apache port (matches APACHE_PORT env)
+TRAEFIK_DYNAMIC_DIR="/opt/traefik/dynamic" # Traefik dynamic config directory used by Saltbox
 
 echo "=== 🚀 Nextcloud AIO + Saltbox Traefik Setup 🚀 ==="
 echo ""
@@ -394,14 +394,31 @@ else
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 fi
 
+# ============================================================================
+# EXTRACT AND PRINT AIO PASSPHRASE
+# ============================================================================
+echo ""
+echo "🔑 Retrieving AIO login passphrase from configuration..."
+echo ""
+
+PASSPHRASE_JSON=$(docker exec nextcloud-aio-mastercontainer cat /mnt/docker-aio-config/data/configuration.json 2>/dev/null || echo "")
+AIO_PASSPHRASE=$(echo "$PASSPHRASE_JSON" | grep -oP '"password"\s*:\s*"\K[^"]+' || echo "")
+
+if [ -n "$AIO_PASSPHRASE" ]; then
+    echo "✅ AIO login passphrase detected:"
+    echo ""
+    echo "   ${AIO_PASSPHRASE}"
+    echo ""
+    echo "➡️  Use this passphrase at: http://${SERVER_IP}:8080"
+else
+    echo "⚠️  Could not read passphrase from configuration.json."
+    echo "    Manual retrieval:"
+    echo "    docker exec nextcloud-aio-mastercontainer cat /mnt/docker-aio-config/data/configuration.json | grep password"
+fi
+
 echo ""
 echo "📋 Access Information:"
 echo "   🌐 AIO Login:       http://${SERVER_IP}:8080"
-echo ""
-echo "➡️  In your browser:"
-echo "   1) Open:  http://${SERVER_IP}:8080"
-echo "   2) Copy the passphrase shown on screen"
-echo "   3) Paste it into the login field and submit"
 echo ""
 
 # ============================================================================
@@ -422,7 +439,10 @@ while [ $POST_ELAPSED -lt $POST_MAX_WAIT ]; do
         CONTAINERS_READY=true
         break
     else
-        echo "   ⏳ Installer still initializing... (HTTP $HTTP_CODE_CONTAINERS)"
+        # Only log occasionally to avoid spam
+        if [ $((POST_ELAPSED % 30)) -eq 0 ]; then
+            echo "   ⏳ Installer still initializing... (last HTTP $HTTP_CODE_CONTAINERS)"
+        fi
     fi
 
     sleep 5
@@ -435,7 +455,7 @@ if [ "$CONTAINERS_READY" = true ]; then
     echo "✅ NEXTCLOUD AIO INSTALLER / CONTAINERS PAGE IS READY"
 else
     echo "⚠️  AIO installer may still be initializing, but should be reachable."
-endif
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "📚 In the AIO web UI:"

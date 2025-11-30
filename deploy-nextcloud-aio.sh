@@ -1,5 +1,5 @@
 #!/bin/bash
-# Nextcloud AIO + Saltbox Traefik - ULTIMATE EDITION
+# Nextcloud AIO + Saltbox Traefik - ULTIMATE EDITION v2.0
 # Features: Auto-certresolver, backup validation, initial password display, recovery script
 # Run as root: sudo ./deploy-nextcloud-aio.sh
 
@@ -14,7 +14,7 @@ echo ""
 echo "📝 Domain Configuration"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-read -p "Enter your base domain (e.g., meatf.art): " BASE_DOMAIN
+read -p "Enter your base domain (e.g., myserver.net): " BASE_DOMAIN
 
 if [[ -z "$BASE_DOMAIN" ]]; then
     echo "❌ Base domain required!"
@@ -318,7 +318,7 @@ fi
 echo "✅ Port 8080 available"
 
 # ============================================================================
-# SETUP
+# DOCKER COMPOSE GENERATION
 # ============================================================================
 echo ""
 echo "📁 Creating /srv/nextcloud-aio..."
@@ -341,9 +341,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
       - 8080:8080    # AIO Interface
-      # - 11000:11000  # COMMENTED: Domaincheck needs exclusive access
     networks:
       - saltbox
+    environment:
+      - APACHE_PORT=11000
+      - APACHE_IP_BINDING=0.0.0.0
+      - SKIP_DOMAIN_VALIDATION=false
+      - NEXTCLOUD_DATADIR=/mnt/docker-aio-data
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=saltbox"
@@ -357,8 +361,156 @@ services:
       - "traefik.http.routers.nextcloud-https.rule=Host(\`${NEXTCLOUD_DOMAIN}\`)"
       - "traefik.http.routers.nextcloud-https.entrypoints=websecure"
       - "traefik.http.routers.nextcloud-https.tls.certresolver=${CERTRESOLVER}"
+      - "traefik.http.routers.nextcloud-https.service=nextcloud"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=11000"
       - "traefik.http.services.nextcloud.loadbalancer.server.scheme=http"
       
-      # HTTP → HTTPS redirect (AIO)
-      - "traefik.http.routers.
+      # HTTP → HTTPS redirect (AIO Interface)
+      - "traefik.http.routers.aio-http.rule=Host(\`${AIO_DOMAIN}\`)"
+      - "traefik.http.routers.aio-http.entrypoints=web"
+      - "traefik.http.routers.aio-http.middlewares=redirect-to-https@docker"
+      
+      # HTTPS AIO Interface
+      - "traefik.http.routers.aio-https.rule=Host(\`${AIO_DOMAIN}\`)"
+      - "traefik.http.routers.aio-https.entrypoints=websecure"
+      - "traefik.http.routers.aio-https.tls.certresolver=${CERTRESOLVER}"
+      - "traefik.http.routers.aio-https.service=aio"
+      - "traefik.http.services.aio.loadbalancer.server.port=8080"
+      - "traefik.http.services.aio.loadbalancer.server.scheme=http"
+
+volumes:
+  nextcloud_aio_mastercontainer:
+    name: nextcloud_aio_mastercontainer
+
+networks:
+  saltbox:
+    external: true
+EOF
+
+echo "✅ docker-compose.yml created"
+
+# ============================================================================
+# DNS VERIFICATION
+# ============================================================================
+echo ""
+echo "🔍 Verifying DNS records..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+for domain in "$NEXTCLOUD_DOMAIN" "$AIO_DOMAIN"; do
+    echo "Checking: $domain"
+    DNS_IP=$(dig +short "$domain" @1.1.1.1 | grep -E '^[0-9.]+$' | head -1)
+    
+    if [[ -z "$DNS_IP" ]]; then
+        echo "  ⚠️  No DNS record found"
+    elif [[ "$DNS_IP" == "$SERVER_IP" ]]; then
+        echo "  ✅ $DNS_IP (matches server)"
+    else
+        echo "  ⚠️  $DNS_IP (does NOT match server: $SERVER_IP)"
+    fi
+done
+
+echo ""
+read -p "DNS warnings can be ignored if using Cloudflare proxy. Continue? (Y/n): " -n 1 -r DNS_CONTINUE
+echo
+if [[ $DNS_CONTINUE =~ ^[Nn]$ ]]; then
+    echo "❌ Deployment cancelled"
+    exit 0
+fi
+
+# ============================================================================
+# DEPLOYMENT
+# ============================================================================
+echo ""
+echo "🚀 Starting Nextcloud AIO..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+docker compose up -d
+
+echo ""
+echo "⏳ Waiting for container to initialize (15 seconds)..."
+sleep 15
+
+# ============================================================================
+# PASSWORD EXTRACTION
+# ============================================================================
+echo ""
+echo "🔑 Extracting initial AIO password..."
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+AIO_PASSWORD=""
+for i in {1..10}; do
+    AIO_PASSWORD=$(docker logs nextcloud-aio-mastercontainer 2>&1 | grep -oP 'Initial password for AIO: \K[A-Za-z0-9]+' | tail -1)
+    if [[ -n "$AIO_PASSWORD" ]]; then
+        break
+    fi
+    echo "  Attempt $i/10: Password not yet available, waiting..."
+    sleep 3
+done
+
+# ============================================================================
+# FINAL STATUS
+# ============================================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "✅ NEXTCLOUD AIO DEPLOYMENT COMPLETE!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "📋 Installation Summary:"
+echo "   Nextcloud URL:     https://${NEXTCLOUD_DOMAIN}"
+echo "   AIO Interface:     https://${AIO_DOMAIN}"
+echo "   Server IP:         $SERVER_IP"
+echo "   Certresolver:      $CERTRESOLVER"
+echo ""
+
+if [[ -n "$AIO_PASSWORD" ]]; then
+    echo "🔐 Initial AIO Password:"
+    echo "   $AIO_PASSWORD"
+    echo ""
+    echo "⚠️  SAVE THIS PASSWORD - Required for first login!"
+else
+    echo "⚠️  Could not auto-extract password."
+    echo "   Run: docker logs nextcloud-aio-mastercontainer | grep 'Initial password'"
+fi
+
+echo ""
+echo "📚 Next Steps:"
+echo "   1. Visit: https://${AIO_DOMAIN}"
+echo "   2. Login with password above"
+echo "   3. Configure Nextcloud domain: ${NEXTCLOUD_DOMAIN}"
+echo "   4. Complete AIO setup wizard"
+echo ""
+echo "🔧 Useful Commands:"
+echo "   Status:    docker compose ps"
+echo "   Logs:      docker compose logs -f"
+echo "   Restart:   docker compose restart"
+echo "   Stop:      docker compose down"
+echo ""
+echo "📖 Documentation:"
+echo "   https://github.com/nextcloud/all-in-one"
+echo ""
+
+# Save deployment info
+cat > /srv/nextcloud-aio/DEPLOYMENT_INFO.txt << DEPLOY_EOF
+Nextcloud AIO Deployment Information
+=====================================
+Deployed: $(date)
+Server IP: $SERVER_IP
+Nextcloud Domain: ${NEXTCLOUD_DOMAIN}
+AIO Interface: ${AIO_DOMAIN}
+Certresolver: ${CERTRESOLVER}
+Initial Password: ${AIO_PASSWORD:-"Check logs: docker logs nextcloud-aio-mastercontainer"}
+
+Access URLs:
+- Nextcloud: https://${NEXTCLOUD_DOMAIN}
+- AIO Admin: https://${AIO_DOMAIN}
+
+Management:
+- Config: /srv/nextcloud-aio
+- Logs: docker compose logs -f
+- Status: docker compose ps
+
+Backup Location (if created): /root/nextcloud-aio-backup-*
+DEPLOY_EOF
+
+echo "💾 Deployment info saved: /srv/nextcloud-aio/DEPLOYMENT_INFO.txt"
+echo ""
